@@ -152,7 +152,10 @@ into the same folder gives you both files rather than one:
   `Shore Temple [2026p].mkv` next to `Shore Temple [1012p].mkv`. Without it the
   second download lands on the first one's filename, finds a file already there,
   and reports success without fetching anything.
-- **Skip media already downloaded** keeps one archive file *per profile* —
+- **Skip media already downloaded** is **off by default**, because the record
+  outlives the file: delete a video and the archive would still claim you have it,
+  skipping it forever. Turn it on when you want playlist resume. It keeps one
+  archive file *per profile* —
   `.mediaforge-archive-2160p.txt`, `.mediaforge-archive-1080p.txt`,
   `.mediaforge-archive-1080p-ta.txt`. Re-running a playlist at the same settings
   fetches only what is new; switching quality or audio language fetches again.

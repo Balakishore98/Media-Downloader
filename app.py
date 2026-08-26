@@ -80,7 +80,7 @@ DEFAULTS = {
     'thumbnail': False,
     'metadata': True,
     'sponsorblock': False,
-    'use_archive': True,
+    'use_archive': False,
     'overwrite': False,
     'include_id': False,
     'quality_in_name': True,
