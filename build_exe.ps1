@@ -70,6 +70,10 @@ $code = $LASTEXITCODE
 $ErrorActionPreference = $previousEAP
 if ($code -ne 0) { throw "PyInstaller failed with exit code $code" }
 
+# PyInstaller's scratch folder holds a stub exe with no Python DLL beside it.
+# Leaving it around invites double-clicking the wrong file, so bin it.
+if (Test-Path 'build') { Remove-Item 'build' -Recurse -Force -ErrorAction SilentlyContinue }
+
 $out = if ($OneDir) { "dist\$appName\$appName.exe" } else { "dist\$appName.exe" }
 Write-Host ''
 Write-Host "Done -> $((Resolve-Path $out).Path)" -ForegroundColor Green

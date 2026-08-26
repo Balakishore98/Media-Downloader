@@ -63,10 +63,19 @@ if ($Uninstall) {
 }
 
 # -------------------------------------------------------------------- install
-$source = Join-Path $PSScriptRoot 'dist\MediaForge'
-if (-not (Test-Path $source)) {
-    throw "Build output not found at $source. Run .\build_exe.ps1 -OneDir first."
+# accept either build layout: dist\MediaForge\ (folder) or dist\MediaForge.exe
+$folderBuild = Join-Path $PSScriptRoot 'dist\MediaForge'
+$singleBuild = Join-Path $PSScriptRoot 'dist\MediaForge.exe'
+if (Test-Path $folderBuild) {
+    $source = $folderBuild
+    $layout = 'folder'
+} elseif (Test-Path $singleBuild) {
+    $source = $singleBuild
+    $layout = 'single-file'
+} else {
+    throw "No build found in $PSScriptRoot\dist. Run .\build_exe.ps1 (single file) or .\build_exe.ps1 -OneDir (folder) first."
 }
+Write-Host "  using the $layout build" -ForegroundColor DarkGray
 
 Write-Host "== Installing $appName ==" -ForegroundColor Cyan
 Get-Process -Name $appName -ErrorAction SilentlyContinue | ForEach-Object {
@@ -80,7 +89,11 @@ if (Test-Path $InstallDir) {
     Remove-Item $InstallDir -Recurse -Force
 }
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-Copy-Item -Path (Join-Path $source '*') -Destination $InstallDir -Recurse -Force
+if ($layout -eq 'folder') {
+    Copy-Item -Path (Join-Path $source '*') -Destination $InstallDir -Recurse -Force
+} else {
+    Copy-Item -Path $source -Destination $InstallDir -Force
+}
 $size = [math]::Round(((Get-ChildItem $InstallDir -Recurse -File | Measure-Object Length -Sum).Sum / 1MB), 1)
 Write-Host "  copied to $InstallDir ($size MB)" -ForegroundColor Green
 
