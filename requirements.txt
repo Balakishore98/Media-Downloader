@@ -1,0 +1,5 @@
+# Runtime
+yt-dlp>=2024.1.1
+
+# Packaging the standalone .exe (optional)
+pyinstaller>=6.0
