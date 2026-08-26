@@ -68,6 +68,31 @@ Many channels now ship one video with a dozen dubbed audio tracks. A MrBeast
 upload, for instance, carries **22 audio tracks**, 25 hand-written subtitle
 languages and 157 auto-generated ones.
 
+### Containers
+
+The container you pick steers which streams are *selected*, not just how they are
+muxed. YouTube's best audio is Opus, which mp4 cannot carry, so simply asking to
+merge into mp4 ends with the merge quietly falling back to mkv.
+
+| Setting | What you get |
+| --- | --- |
+| `AUTO` | Best available streams. Usually lands as `.mkv`, because the best audio is Opus. |
+| `mp4` | A real `.mp4` — AAC audio and an mp4-compatible video stream, chosen up front so nothing is re-encoded. |
+| `mkv` | Holds anything; best quality whatever the codecs. |
+| `webm` | VP9/AV1 + Opus. |
+
+If the streams genuinely cannot fit the container you asked for, the console says
+so and names the extension actually written.
+
+### Resolutions
+
+Profiles cap the **height**, and YouTube labels formats by tier rather than by
+literal pixels. A 2.39:1 video, for example, offers `1920x1012` as its "1080p"
+and `2560x1350` as its "1440p" — so `1080p · Full HD` gives you the 1012-tall
+file, which is correct. The filename records the real height, and if nothing at
+or below the cap exists the console warns rather than silently handing you a
+much larger file.
+
 **FORMAT ▸ AUDIO TRACK** picks which dub to download — `AUTO` takes whatever the
 site marks as the original. If a video does not offer the language you asked for,
 MediaForge falls back to the original track rather than failing, and the console

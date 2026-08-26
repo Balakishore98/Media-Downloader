@@ -404,9 +404,15 @@ class App(tk.Tk):
         ttk.Label(b, text='CONTAINER', style='Head.TLabel').grid(row=4, column=0, sticky='w')
         ttk.Label(b, text='AUDIO kbps', style='Head.TLabel').grid(row=4, column=1, sticky='w',
                                                                   padx=(8, 0))
-        ttk.Combobox(b, textvariable=mkvar('container'), state='readonly', width=9,
-                     values=CONTAINERS, font=self.fonts.mono_sm).grid(
-            row=5, column=0, sticky='ew', pady=(2, 8))
+        cont = ttk.Combobox(b, textvariable=mkvar('container'), state='readonly', width=9,
+                            values=CONTAINERS, font=self.fonts.mono_sm)
+        cont.grid(row=5, column=0, sticky='ew', pady=(2, 8))
+        Tip(cont, 'AUTO  best available streams; usually lands as .mkv\n'
+                  '      because the best audio is Opus, which mp4 cannot hold\n'
+                  'mp4   forces a real .mp4 - picks AAC audio and an\n'
+                  '      mp4-compatible video stream, no re-encoding\n'
+                  'mkv   holds anything; best quality with any codec\n'
+                  'webm  VP9/AV1 + Opus')
         ttk.Combobox(b, textvariable=mkvar('audio_bitrate'), state='readonly', width=9,
                      values=AUDIO_BITRATES, font=self.fonts.mono_sm).grid(
             row=5, column=1, sticky='ew', padx=(8, 0), pady=(2, 8))

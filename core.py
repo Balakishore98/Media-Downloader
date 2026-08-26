@@ -164,6 +164,17 @@ def audio_code(label: str) -> str:
 
 ALL_TRACKS = 'all'
 
+# Codec families each container can actually carry.  Picking a container has to
+# steer format *selection*, not just the merge target: YouTube's best audio is
+# Opus, which mp4 cannot hold, so asking for mp4 without steering the choice
+# ends with the merge silently falling back to mkv.
+CONTAINER_PREFS: dict[str, tuple[str, str]] = {
+    'mp4': ('[ext=mp4]', '[ext=m4a]'),
+    'webm': ('[ext=webm]', '[ext=webm]'),
+    'mkv': ('', ''),
+    'AUTO': ('', ''),
+}
+
 
 def parse_langs(text) -> list[str]:
     """'ta, en' -> ['ta', 'en'].  Accepts a list too."""
@@ -176,46 +187,59 @@ def parse_langs(text) -> list[str]:
     return [x.strip() for x in parts if x.strip()]
 
 
-def build_format(preset: str, audio_lang: str = '', extra_langs=()) -> str:
-    """Compose a format selector, preferring dubbed audio track(s) when asked.
+def _audio_expr(main: str, extras, pref: str) -> str:
+    def one(code):
+        return f'ba{f"[language^={code}]" if code else ""}{pref}'
+    return '+'.join([one(main)] + [one(c) for c in extras])
 
-    *extra_langs* adds further audio streams alongside the main one, which
-    needs `allow_multiple_audio_streams`.  Every language-specific branch is
-    followed by a plain fallback, so a video carrying a single audio track
-    still downloads.
+
+def build_format(preset: str, audio_lang: str = '', extra_langs=(),
+                 container: str = 'AUTO') -> str:
+    """Compose a format selector.
+
+    Preference order: honour container + language, then drop the container
+    constraint, then the extra languages, then the language, and only then the
+    height cap - so the most specific request that the media can satisfy wins.
     """
     spec, kind = QUALITY_PRESETS.get(preset, next(iter(QUALITY_PRESETS.values())))
     main = audio_code(audio_lang)
-    # ^= matches 'zh' against 'zh-Hans' as well as an exact code
     extras = [c for c in parse_langs(extra_langs) if c and c != main]
-
-    def alt(code):
-        return f'ba[language^={code}]' if code else 'ba'
+    vpref, apref = CONTAINER_PREFS.get(container, ('', ''))
 
     if kind in ('mp3', 'm4a', 'audio'):
         # a single audio file cannot carry several tracks
         ext = '[ext=m4a]' if kind == 'm4a' else ''
-        pref = f'[language^={main}]' if main else ''
-        chain = ([f'ba{pref}{ext}', f'ba{pref}'] if pref else []) + [f'ba{ext}', 'ba', 'b']
+        lang = f'[language^={main}]' if main else ''
+        chain = ([f'ba{lang}{ext}', f'ba{lang}'] if lang else []) + [f'ba{ext}', 'ba', 'b']
         return '/'.join(dict.fromkeys(c for c in chain if c))
 
-    audio = '+'.join([alt(main)] + [alt(c) for c in extras]) if (main or extras) else ''
-
     if spec == 'worst':
-        chain = ([f'wv*+{audio}'] if audio else []) + ['wv*+wa', 'w']
-        return '/'.join(dict.fromkeys(chain))
+        chain = [f'wv*+{_audio_expr(main, extras, apref)}'] if (main or extras or apref) else []
+        return '/'.join(dict.fromkeys(chain + ['wv*+wa', 'w']))
 
     cap = f'[height<={spec}]' if isinstance(spec, int) else ''
     chain = []
-    if audio:
-        chain.append(f'bv*{cap}+{audio}')
+    if vpref or apref:
+        chain.append(f'bv*{cap}{vpref}+{_audio_expr(main, extras, apref)}')
         if extras:
-            # every extra language present is a bonus, not a requirement
-            chain.append(f'bv*{cap}+{alt(main)}')
+            chain.append(f'bv*{cap}{vpref}+{_audio_expr(main, [], apref)}')
+        chain.append(f'bv*{cap}+{_audio_expr(main, extras, apref)}')
+    if main or extras:
+        chain.append(f'bv*{cap}+{_audio_expr(main, extras, "")}')
+        if extras:
+            chain.append(f'bv*{cap}+{_audio_expr(main, [], "")}')
     chain += [f'bv*{cap}+ba', f'b{cap}']
     if cap:
-        chain += ['bv*+ba', 'b']
-    return '/'.join(dict.fromkeys(chain))
+        # nothing at or below the cap - take the smallest thing above it rather
+        # than the best, so asking for 1080p never lands a surprise 4K file
+        chain += ['wv*+wa', 'w']
+    return '/'.join(dict.fromkeys(c for c in chain if c))
+
+
+def height_cap(preset: str):
+    """Requested height cap for a profile, or None when uncapped."""
+    spec, _kind = QUALITY_PRESETS.get(preset, (None, 'video'))
+    return spec if isinstance(spec, int) else None
 
 
 CONTAINERS = ['AUTO', 'mp4', 'mkv', 'webm']
@@ -301,6 +325,7 @@ class DownloadItem:
     bytes_done: int = 0
     filepath: str = ''
     audio_lang: str = ''
+    height: int | None = None
     force: bool = False
     error: str = ''
 
@@ -563,9 +588,13 @@ def build_outtmpl(item: DownloadItem, settings: dict) -> str:
 
 def build_opts(item: DownloadItem, settings: dict, hooks: dict) -> dict:
     preset = settings.get('quality') or next(iter(QUALITY_PRESETS))
+    if preset not in QUALITY_PRESETS and hooks.get('log'):
+        hooks['log'](f'WARNING: unknown quality profile {preset!r} - falling back to '
+                     f'{next(iter(QUALITY_PRESETS))}')
     _spec, kind = QUALITY_PRESETS.get(preset, next(iter(QUALITY_PRESETS.values())))
     extras = parse_langs(settings.get('audio_extra', '')) if kind == 'video' else []
-    selector = build_format(preset, settings.get('audio_lang', ''), extras)
+    container = settings.get('container', 'AUTO')
+    selector = build_format(preset, settings.get('audio_lang', ''), extras, container)
     has_ffmpeg = ffmpeg_available()
 
     opts = _base_opts(settings, hooks.get('log'))
@@ -612,7 +641,6 @@ def build_opts(item: DownloadItem, settings: dict, hooks: dict) -> dict:
                 'preferredquality': str(settings.get('audio_bitrate', '192')),
             })
     elif kind == 'video':
-        container = settings.get('container', 'AUTO')
         if has_ffmpeg and container != 'AUTO':
             opts['merge_output_format'] = container
             postprocessors.append({'key': 'FFmpegVideoRemuxer', 'preferedformat': container})
@@ -753,6 +781,20 @@ def download_item(item: DownloadItem, settings: dict, on_progress, on_log,
             picked = [f.get('language') for f in (info.get('requested_formats') or [info])
                       if f.get('language')]
             item.audio_lang = '+'.join(dict.fromkeys(picked)) or (info.get('language') or '')
+
+            streams = info.get('requested_formats') or [info]
+            heights = [f.get('height') for f in streams if f.get('height')]
+            item.height = max(heights) if heights else None
+            cap = height_cap(settings.get('quality', ''))
+            if cap and item.height and item.height > cap:
+                on_log(f'WARNING: {item.display_title}: nothing at or below {cap}p was '
+                       f'available - took {item.height}p instead')
+            want = settings.get('container', 'AUTO')
+            if want != 'AUTO' and item.filepath:
+                actual = os.path.splitext(item.filepath)[1].lstrip('.').lower()
+                if actual and actual != want.lower():
+                    on_log(f'WARNING: {item.display_title}: asked for .{want} but the '
+                           f'streams could not be held by it - wrote .{actual}')
     except DownloadCancelled:
         item.status = STATUS_CANCELLED
         item.speed_raw = 0.0
