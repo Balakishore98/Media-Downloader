@@ -162,28 +162,57 @@ def audio_code(label: str) -> str:
     return label.strip()
 
 
-def build_format(preset: str, audio_lang: str = '') -> str:
-    """Compose a format selector, preferring a dubbed audio track when asked.
+ALL_TRACKS = 'all'
 
-    The requested language is always followed by a fallback, so a video that
-    carries only one audio track still downloads.
+
+def parse_langs(text) -> list[str]:
+    """'ta, en' -> ['ta', 'en'].  Accepts a list too."""
+    if not text:
+        return []
+    if isinstance(text, (list, tuple)):
+        parts = list(text)
+    else:
+        parts = str(text).replace(';', ',').split(',')
+    return [x.strip() for x in parts if x.strip()]
+
+
+def build_format(preset: str, audio_lang: str = '', extra_langs=()) -> str:
+    """Compose a format selector, preferring dubbed audio track(s) when asked.
+
+    *extra_langs* adds further audio streams alongside the main one, which
+    needs `allow_multiple_audio_streams`.  Every language-specific branch is
+    followed by a plain fallback, so a video carrying a single audio track
+    still downloads.
     """
     spec, kind = QUALITY_PRESETS.get(preset, next(iter(QUALITY_PRESETS.values())))
-    lang = audio_code(audio_lang)
+    main = audio_code(audio_lang)
     # ^= matches 'zh' against 'zh-Hans' as well as an exact code
-    pref = f'[language^={lang}]' if lang else ''
+    extras = [c for c in parse_langs(extra_langs) if c and c != main]
+
+    def alt(code):
+        return f'ba[language^={code}]' if code else 'ba'
 
     if kind in ('mp3', 'm4a', 'audio'):
+        # a single audio file cannot carry several tracks
         ext = '[ext=m4a]' if kind == 'm4a' else ''
+        pref = f'[language^={main}]' if main else ''
         chain = ([f'ba{pref}{ext}', f'ba{pref}'] if pref else []) + [f'ba{ext}', 'ba', 'b']
         return '/'.join(dict.fromkeys(c for c in chain if c))
 
+    audio = '+'.join([alt(main)] + [alt(c) for c in extras]) if (main or extras) else ''
+
     if spec == 'worst':
-        chain = ([f'wv*+wa{pref}'] if pref else []) + ['wv*+wa', 'w']
+        chain = ([f'wv*+{audio}'] if audio else []) + ['wv*+wa', 'w']
         return '/'.join(dict.fromkeys(chain))
 
     cap = f'[height<={spec}]' if isinstance(spec, int) else ''
-    chain = ([f'bv*{cap}+ba{pref}'] if pref else []) + [f'bv*{cap}+ba', f'b{cap}']
+    chain = []
+    if audio:
+        chain.append(f'bv*{cap}+{audio}')
+        if extras:
+            # every extra language present is a bonus, not a requirement
+            chain.append(f'bv*{cap}+{alt(main)}')
+    chain += [f'bv*{cap}+ba', f'b{cap}']
     if cap:
         chain += ['bv*+ba', 'b']
     return '/'.join(dict.fromkeys(chain))
@@ -202,7 +231,33 @@ STATUS_CANCELLED = 'ABORTED'
 STATUS_SKIPPED = 'ON DISK'
 
 FINISHED_STATES = {STATUS_DONE, STATUS_ERROR, STATUS_CANCELLED, STATUS_SKIPPED}
-ARCHIVE_NAME = '.mediaforge-archive.txt'
+ARCHIVE_PREFIX = '.mediaforge-archive'
+
+
+def archive_name(settings: dict) -> str:
+    """Archive file for this output profile.
+
+    The archive records media ids, not qualities, so a single shared file would
+    make "already downloaded" mean "downloaded at *some* quality" - fetching the
+    same video again at a different resolution or in another language would be
+    skipped.  Keying the file by profile keeps playlist resume working while
+    letting a different profile fetch the same media again.
+    """
+    preset = str(settings.get('quality') or 'default')
+    head, _, tail = preset.partition('\u00b7')
+    slug = head.strip() or 'default'
+    if slug.upper() == 'AUDIO':
+        slug = f'AUDIO-{tail.strip()}'
+
+    parts = [slug]
+    lang = audio_code(settings.get('audio_lang', ''))
+    if lang:
+        parts.append(lang)
+    if parse_langs(settings.get('audio_extra', '')):
+        parts.append('multi')
+
+    safe = re.sub(r'[^A-Za-z0-9._-]+', '-', '-'.join(parts)).strip('-')
+    return f'{ARCHIVE_PREFIX}-{safe}.txt'.lower()
 
 
 def ffmpeg_available() -> bool:
@@ -246,6 +301,7 @@ class DownloadItem:
     bytes_done: int = 0
     filepath: str = ''
     audio_lang: str = ''
+    force: bool = False
     error: str = ''
 
     @property
@@ -487,6 +543,18 @@ def build_outtmpl(item: DownloadItem, settings: dict) -> str:
     name = '%(title).150B'
     if item.playlist_title and settings.get('number_playlist_items', True) and item.playlist_index:
         name = f'{item.playlist_index:03d} - {name}'
+
+    # Without this, the same video fetched at two qualities lands on one
+    # filename: the second download finds the first file already there and is
+    # reported as finished without anything being fetched.
+    if settings.get('quality_in_name', True):
+        _spec, kind = QUALITY_PRESETS.get(settings.get('quality', ''), (None, 'video'))
+        if kind == 'video':
+            # height of what was actually taken, not the cap that was asked for
+            name += ' [%(height&{}p|na)s]'
+        elif kind in ('mp3', 'm4a'):
+            name += f' [{settings.get("audio_bitrate", "192")}k]'
+
     if settings.get('include_id', False):
         name += ' [%(id)s]'
     parts.append(name + '.%(ext)s')
@@ -496,7 +564,8 @@ def build_outtmpl(item: DownloadItem, settings: dict) -> str:
 def build_opts(item: DownloadItem, settings: dict, hooks: dict) -> dict:
     preset = settings.get('quality') or next(iter(QUALITY_PRESETS))
     _spec, kind = QUALITY_PRESETS.get(preset, next(iter(QUALITY_PRESETS.values())))
-    selector = build_format(preset, settings.get('audio_lang', ''))
+    extras = parse_langs(settings.get('audio_extra', '')) if kind == 'video' else []
+    selector = build_format(preset, settings.get('audio_lang', ''), extras)
     has_ffmpeg = ffmpeg_available()
 
     opts = _base_opts(settings, hooks.get('log'))
@@ -514,6 +583,10 @@ def build_opts(item: DownloadItem, settings: dict, hooks: dict) -> dict:
         'trim_file_name': 200,
     })
 
+    if extras:
+        # several audio streams muxed into one file
+        opts['allow_multiple_audio_streams'] = True
+
     if hooks.get('progress'):
         opts['progress_hooks'] = [hooks['progress']]
     if hooks.get('postprocessor'):
@@ -527,7 +600,7 @@ def build_opts(item: DownloadItem, settings: dict, hooks: dict) -> dict:
             opts['ratelimit'] = rate
 
     if settings.get('use_archive') and settings.get('outdir'):
-        opts['download_archive'] = os.path.join(settings['outdir'], ARCHIVE_NAME)
+        opts['download_archive'] = os.path.join(settings['outdir'], archive_name(settings))
 
     postprocessors: list[dict] = []
 
@@ -544,7 +617,8 @@ def build_opts(item: DownloadItem, settings: dict, hooks: dict) -> dict:
             opts['merge_output_format'] = container
             postprocessors.append({'key': 'FFmpegVideoRemuxer', 'preferedformat': container})
         elif has_ffmpeg:
-            opts['merge_output_format'] = 'mp4/mkv'
+            # mkv tags per-track languages far more reliably than mp4
+            opts['merge_output_format'] = 'mkv' if extras else 'mp4/mkv'
 
     if settings.get('subtitles'):
         opts['writesubtitles'] = True
@@ -650,6 +724,18 @@ def download_item(item: DownloadItem, settings: dict, on_progress, on_log,
 
     hooks = {'progress': progress_hook, 'postprocessor': pp_hook, 'post': post_hook,
              'log': on_log}
+
+    if ALL_TRACKS in [x.lower() for x in parse_langs(settings.get('audio_extra', ''))]:
+        # 'all' needs to know what this particular media actually offers
+        try:
+            available = sorted(probe_tracks(item.url, settings)['audio'])
+        except Exception:  # noqa: BLE001 - fall back to a single track
+            available = []
+        if available:
+            on_log(f'{item.display_title}: embedding {len(available)} audio track(s) '
+                   f'({", ".join(available)})')
+        settings = dict(settings, audio_extra=available)
+
     opts = build_opts(item, settings, hooks)
 
     try:
@@ -666,7 +752,7 @@ def download_item(item: DownloadItem, settings: dict, on_progress, on_log,
                     downloads[0].get('filepath', '') if downloads else '')
             picked = [f.get('language') for f in (info.get('requested_formats') or [info])
                       if f.get('language')]
-            item.audio_lang = picked[0] if picked else (info.get('language') or '')
+            item.audio_lang = '+'.join(dict.fromkeys(picked)) or (info.get('language') or '')
     except DownloadCancelled:
         item.status = STATUS_CANCELLED
         item.speed_raw = 0.0

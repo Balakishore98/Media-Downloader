@@ -72,6 +72,7 @@ DEFAULTS = {
     'container': 'AUTO',
     'audio_bitrate': '192',
     'audio_lang': AUTO_AUDIO,
+    'audio_extra': '',
     'subtitles': False,
     'auto_subs': True,
     'embed_subs': True,
@@ -82,6 +83,7 @@ DEFAULTS = {
     'use_archive': True,
     'overwrite': False,
     'include_id': False,
+    'quality_in_name': True,
     'platform_folder': False,
     'playlist_folder': True,
     'number_playlist_items': True,
@@ -354,6 +356,10 @@ class App(tk.Tk):
         checks(opt, [
             ('platform_folder', 'Sort into per-source folders',
              'YOUTUBE\\... , INSTAGRAM\\... etc.'),
+            ('quality_in_name', 'Append quality to filename',
+             'Title [1080p].mkv\n\nKeeps renditions apart, so the same video can be\n'
+             'kept at several qualities in one folder. Without it the\n'
+             'second download collides with the first and is skipped.'),
             ('include_id', 'Append media id to filename', 'Title [dQw4w9WgXcQ].mp4'),
             ('use_archive', 'Skip media already downloaded',
              'Keeps an archive file in the output folder.\nRe-running a playlist then '
@@ -373,14 +379,27 @@ class App(tk.Tk):
             row=1, column=0, columnspan=2, sticky='ew', pady=(2, 7))
 
         ttk.Label(b, text='AUDIO TRACK', style='Head.TLabel').grid(row=2, column=0,
-                                                                    sticky='w')
+                                                                    sticky='w', pady=(0, 4))
         track = ttk.Combobox(b, textvariable=mkvar('audio_lang'), state='readonly',
                              values=list(AUDIO_LANGUAGES), font=self.fonts.mono_sm)
-        track.grid(row=3, column=0, columnspan=2, sticky='ew', pady=(2, 7))
+        track.grid(row=2, column=1, sticky='ew', padx=(8, 0), pady=(0, 4))
         Tip(track, 'Which dubbed audio track to take when a video carries\n'
                    'more than one. Falls back to the original track if that\n'
                    'language is not offered. Right-click a queued row and\n'
                    'pick "Inspect tracks" to list what a video actually has.')
+
+        extra = ttk.Frame(b, style='Panel.TFrame')
+        extra.grid(row=3, column=0, columnspan=2, sticky='ew', pady=(0, 7))
+        extra.columnconfigure(1, weight=1)
+        ttk.Label(extra, text='ALSO EMBED', style='Head.TLabel').grid(row=0, column=0,
+                                                                     sticky='w')
+        extra_entry = ttk.Entry(extra, textvariable=mkvar('audio_extra'),
+                                font=self.fonts.mono_sm)
+        extra_entry.grid(row=0, column=1, sticky='ew', padx=(8, 0))
+        Tip(extra_entry, 'Extra audio tracks to mux into the same file:\n'
+                         '   ta,en      those languages alongside the main one\n'
+                         '   all        every dubbed track the media carries\n'
+                         'Empty keeps a single audio track. Video profiles only.')
 
         ttk.Label(b, text='CONTAINER', style='Head.TLabel').grid(row=4, column=0, sticky='w')
         ttk.Label(b, text='AUDIO kbps', style='Head.TLabel').grid(row=4, column=1, sticky='w',
@@ -568,6 +587,7 @@ class App(tk.Tk):
         self.menu.add_command(label='Copy link', command=self.copy_link)
         self.menu.add_separator()
         self.menu.add_command(label='Requeue', command=self.retry_selected)
+        self.menu.add_command(label='Force re-download', command=self.force_selected)
         self.menu.add_command(label='Remove', command=self.remove_selected)
 
         cwrap = tk.Frame(nb, background=C['border'])
@@ -837,8 +857,11 @@ class App(tk.Tk):
             item.status = STATUS_CANCELLED
             self.mark_dirty(item)
             return
+        settings = self.run_settings
+        if getattr(item, 'force', False):
+            settings = dict(settings, use_archive=False, overwrite=True)
         try:
-            download_item(item, self.run_settings, self.mark_dirty,
+            download_item(item, settings, self.mark_dirty,
                           self.console_threadsafe, self.cancel_event)
             self.events.put(('done', item))
         except Cancelled:
@@ -909,6 +932,10 @@ class App(tk.Tk):
                     if item.status == STATUS_DONE:
                         tag = f'  [audio: {item.audio_lang}]' if item.audio_lang else ''
                         self.console(f'✓ {item.display_title}{tag}', 'ok')
+                    elif item.status == STATUS_SKIPPED:
+                        self.console(f'• {item.display_title} — already recorded for '
+                                     f'this profile. Right-click ▸ Force re-download to '
+                                     f'fetch it anyway.', 'warn')
                 elif kind == 'items':
                     items, label, _url = event[1], event[2], event[3]
                     if len(items) > LARGE_COLLECTION and not messagebox.askyesno(
@@ -1096,6 +1123,27 @@ class App(tk.Tk):
         for item in self.selected_items():
             self._reset(item)
 
+    def force_selected(self):
+        """Requeue ignoring the archive and overwriting whatever is on disk."""
+        count = 0
+        for item in self.selected_items():
+            if item.active:
+                continue
+            item.force = True
+            item.status = STATUS_QUEUED
+            item.percent = 0.0
+            item.speed = item.eta = item.size = item.error = ''
+            item.speed_raw = 0.0
+            item.bytes_done = 0
+            item.filepath = ''
+            self.refresh_row(item)
+            count += 1
+        if count:
+            self.console(f'{count} item(s) forced — archive bypassed, files overwritten',
+                         'ok')
+            if self.running:
+                self.submit([i for i in self.selected_items() if getattr(i, 'force', False)])
+
     def retry_failed(self):
         count = 0
         for uid in self.order:
@@ -1109,6 +1157,7 @@ class App(tk.Tk):
     def _reset(self, item: DownloadItem):
         if not item.finished:
             return
+        item.force = False
         item.status = STATUS_QUEUED
         item.percent = 0.0
         item.speed = item.eta = item.size = item.error = ''

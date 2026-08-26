@@ -77,6 +77,21 @@ reports the track that was actually taken:
 ✓ Escape 100 Cops, Win $500,000  [audio: ta]
 ```
 
+**FORMAT ▸ ALSO EMBED** muxes *several* audio tracks into one file. List the extra
+languages (`en,hi`) or put `all` to take every dubbed track the media carries. The
+result is a single `.mkv` whose tracks are language-tagged, so your player can
+switch between them:
+
+```
+ffprobe -> 3 audio stream(s)
+   #1  opus  language=tam
+   #2  opus  language=eng
+   #3  opus  language=hin
+```
+
+Leave it empty for a single track. Audio-only profiles ignore it — one MP3 cannot
+hold several tracks.
+
 **FORMAT ▸ Subtitles ▸ LANGS** takes a comma-separated list — `en`, `en,ta,hi`,
 or `all` for every language a video offers. *Include auto-generated* adds machine
 captions (avoid pairing it with `all` — that is 150+ files per video), and
@@ -111,7 +126,7 @@ thousands of uploads cannot flood the queue by accident.
 transfer bar, rate, ETA and size. Failed rows show the reason inline.
 
 - **Double-click** — open the finished file, or the source page if not fetched yet
-- **Right-click** — open file, show in folder, **inspect tracks**, copy link, requeue, remove
+- **Right-click** — open file, show in folder, **inspect tracks**, copy link, requeue, **force re-download**, remove
 - **Delete** — remove selected rows
 
 **CONSOLE** — timestamped engine log, colour-coded by severity.
@@ -123,13 +138,28 @@ aggregate rate, session volume, and overall progress.
 
 | Panel | What it controls |
 | --- | --- |
-| **OUTPUT** | Destination folder; per-source subfolders (`YOUTUBE\`, `INSTAGRAM\`); append media id to filenames; skip media already downloaded; overwrite. |
-| **FORMAT** | Quality profile from `MAX` down to `480p`, `MIN`, or audio-only MP3/M4A; **audio track language**; output container; audio bitrate; **subtitles and their languages**; cover thumbnail, metadata + chapters, sponsor-segment removal. |
+| **OUTPUT** | Destination folder; per-source subfolders (`YOUTUBE\`, `INSTAGRAM\`); **append quality to filenames**; append media id; skip media already downloaded; overwrite. |
+| **FORMAT** | Quality profile from `MAX` down to `480p`, `MIN`, or audio-only MP3/M4A; **audio track language** and **extra tracks to embed**; output container; audio bitrate; **subtitles and their languages**; cover thumbnail, metadata + chapters, sponsor-segment removal. |
 | **COLLECTIONS** | Folder per collection; number files by playlist position; reverse order; treat a link as a single video; **RANGE** to take part of a collection (`1-25`, `3,7,12-`, `-10`). |
 | **NETWORK · AUTH** | Parallel threads (1–8); per-download rate cap (`2M`, `500K`); session cookies from a browser; proxy. |
 
-**Skip media already downloaded** keeps a `.mediaforge-archive.txt` in the output
-folder. Re-run a playlist later and only the new items are fetched.
+### Downloading the same video twice
+
+Two settings keep renditions apart, so grabbing one video at 4K and again at 1080p
+into the same folder gives you both files rather than one:
+
+- **Append quality to filename** puts the real height in the name —
+  `Shore Temple [2026p].mkv` next to `Shore Temple [1012p].mkv`. Without it the
+  second download lands on the first one's filename, finds a file already there,
+  and reports success without fetching anything.
+- **Skip media already downloaded** keeps one archive file *per profile* —
+  `.mediaforge-archive-2160p.txt`, `.mediaforge-archive-1080p.txt`,
+  `.mediaforge-archive-1080p-ta.txt`. Re-running a playlist at the same settings
+  fetches only what is new; switching quality or audio language fetches again.
+
+To override either on the spot, right-click a row and choose **Force re-download** —
+it bypasses the archive and overwrites what is on disk. A row that says `ON DISK`
+was skipped because that exact profile was already fetched.
 
 Settings are saved to `%LOCALAPPDATA%\MediaForge\settings.json` when a batch starts
 and when the app closes.
@@ -142,6 +172,7 @@ and when the app closes.
 | `core.py` | engine wrapper: collection expansion, option building, downloading |
 | `theme.py` | dark palette, ttk styling, custom widgets |
 | `build_exe.ps1` | PyInstaller packaging |
+| `install.ps1` | per-user install, shortcuts, uninstall (`-Uninstall`) |
 | `make_icon.py` | regenerates `icon.ico` from the brand mark |
 | `run.bat` | console-free launcher |
 
