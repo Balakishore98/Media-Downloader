@@ -5,3 +5,6 @@ app/build/
 *.apk
 *.iml
 .idea/
+keystore.properties
+*.jks
+*.keystore

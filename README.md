@@ -12,6 +12,7 @@ Paste links, press **EXECUTE**.
 - **Picks the audio language.** Videos with dubbed tracks download in the language
   you choose, with subtitles in any languages you list.
 - Parallel transfers, live per-item progress, throughput graph, resumable downloads.
+- **Android app** in `android/` - the same engine running natively on a phone.
 
 ## Running it
 
@@ -43,6 +44,43 @@ subtitles. The header shows an amber `NO FFMPEG` light when it is missing.
 ```
 
 The result needs no Python installation.
+
+## Android app
+
+`android/` is a native APK that downloads on the phone itself - no PC, no server.
+
+```powershell
+cd android
+$env:JAVA_HOME = 'D:\Android\jdk-17.0.20.1+1'
+D:\Android\gradle-8.14\bin\gradle.bat assembleRelease   # -> dist\MediaForge.apk
+```
+
+Copy the APK to your phone and open it (allow "install unknown apps" once).
+It registers as a **share target**, so Share from the YouTube or Instagram app
+sends the link straight into it.
+
+**No ffmpeg.** ffmpeg-kit was retired and pulled from Maven Central, so there is
+no maintained ffmpeg build for Android. Instead the app fetches the video and
+audio streams separately and hands them to Android's own **MediaMuxer**, which
+copies the encoded samples into one MP4. That is a remux, not a re-encode -
+nothing is transcoded, no quality is lost, and no native library ships.
+
+| | |
+| --- | --- |
+| Engine | yt-dlp under Chaquopy (Python 3.11 bundled) |
+| ABIs | arm64-v8a, armeabi-v7a, x86_64 |
+| Min Android | 8.0 (API 26) |
+| Size | ~49 MB |
+| Saves to | `Downloads/MediaForge/` via MediaStore, so it shows in the gallery |
+
+Merged video currently caps at **1080p**: MediaMuxer's MP4 path takes H.264 +
+AAC, and YouTube only offers VP9/AV1 above that. Single-stream sites (Instagram,
+TikTok) and audio-only downloads are unaffected. Raising the cap means adding a
+WebM/VP9 mux path.
+
+Building it needs JDK 17 and the Android SDK; `android/local.properties` points
+at the SDK and `android/keystore.properties` holds signing credentials. Both are
+gitignored - without the latter the release build simply comes out unsigned.
 
 ## Instagram
 
