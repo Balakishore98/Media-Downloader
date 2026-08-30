@@ -49,6 +49,7 @@ from core import (
     download_item,
     expand_url,
     ffmpeg_available,
+    install_ffmpeg,
     probe_tracks,
     human_bytes,
     human_speed,
@@ -217,9 +218,10 @@ class App(tk.Tk):
         if ffmpeg_available():
             self.console('ffmpeg detected · merging, remux, audio extraction enabled', 'ok')
         else:
-            self.console('ffmpeg NOT found on PATH — no stream merging, MP3 conversion, '
-                         'thumbnail or subtitle embedding. Install it: winget install '
-                         'Gyan.FFmpeg', 'warn')
+            self.console('ffmpeg NOT found. Most sites hand out video and audio as '
+                         'separate streams that have to be merged, so downloads will fail '
+                         'without it. Press INSTALL FFMPEG in the header — it takes care '
+                         'of itself.', 'warn')
 
     # ------------------------------------------------------------------ UI --
     def _build_ui(self):
@@ -304,6 +306,10 @@ class App(tk.Tk):
                               bg=C['panel'])
         self.led_engine.pack(side='right', padx=(14, 0))
         ok = ffmpeg_available()
+        self.btn_ffmpeg = ttk.Button(right, text='INSTALL FFMPEG',
+                                     command=self.install_ffmpeg_clicked)
+        if not ok:
+            self.btn_ffmpeg.pack(side='right', padx=(14, 0))
         self.led_ffmpeg = LED(right, 'FFMPEG' if ok else 'NO FFMPEG',
                               C['green'] if ok else C['amber'], self.fonts, bg=C['panel'])
         self.led_ffmpeg.pack(side='right', padx=(14, 0))
@@ -682,6 +688,29 @@ class App(tk.Tk):
         self.status_lbl.grid(row=0, column=1, sticky='e', padx=(14, 0))
 
     # ------------------------------------------------------------- utils ---
+    def install_ffmpeg_clicked(self):
+        if ffmpeg_available():
+            self.console('ffmpeg is already available', 'ok')
+            return
+        self.btn_ffmpeg.configure(state='disabled', text='INSTALLING…')
+        self.notebook.select(1)
+        self.console('installing ffmpeg — this runs once', 'ok')
+        threading.Thread(target=self._install_ffmpeg_worker, daemon=True).start()
+
+    def _install_ffmpeg_worker(self):
+        ok = install_ffmpeg(lambda m: self.events.put(('log', m, 'dim')))
+        self.events.put(('ffmpeg_done', ok))
+
+    def _ffmpeg_installed(self, ok: bool):
+        if ok and ffmpeg_available():
+            self.led_ffmpeg.set('FFMPEG', C['green'])
+            self.btn_ffmpeg.pack_forget()
+            self.console('ffmpeg ready — full quality merging is now available', 'ok')
+        else:
+            self.btn_ffmpeg.configure(state='normal', text='INSTALL FFMPEG')
+            self.console('could not install ffmpeg automatically. Install it by hand: '
+                         'winget install Gyan.FFmpeg — then restart the app.', 'err')
+
     def collect_settings(self) -> dict:
         data = dict(self.settings)
         for key, var in self.var.items():
@@ -834,6 +863,17 @@ class App(tk.Tk):
         self.btn_stop.configure(state='normal')
         self.led_state.set('RUNNING', C['accent'])
 
+        if not ffmpeg_available():
+            self.console('ffmpeg is missing, so streams cannot be merged \u2014 falling back '
+                         'to ready-made streams only. YouTube caps those at 720p, and MP3 '
+                         'conversion, thumbnail/subtitle embedding and container choice are '
+                         'unavailable. Install it for full quality: winget install '
+                         'Gyan.FFmpeg', 'warn')
+            preset = self.run_settings.get('quality', '')
+            if str(self.run_settings.get('audio_lang', '')) not in ('', AUTO_AUDIO):
+                self.console('audio track selection needs ffmpeg \u2014 the stream\'s own '
+                             'audio will be used', 'warn')
+
         if self.run_settings.get('subtitles'):
             langs = str(self.run_settings.get('sub_langs') or 'en').lower()
             if 'all' in langs.split(',') and self.run_settings.get('auto_subs'):
@@ -964,6 +1004,8 @@ class App(tk.Tk):
                         self.console(f'{len(added)} item(s) joined the running batch', 'dim')
                 elif kind == 'expand_error':
                     self.console(f'✗ {event[1]} — {event[2]}', 'err')
+                elif kind == 'ffmpeg_done':
+                    self._ffmpeg_installed(event[1])
                 elif kind == 'expand_done':
                     self.expanding = max(0, self.expanding - 1)
                 elif kind == 'batch_done':

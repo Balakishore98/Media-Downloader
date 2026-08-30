@@ -194,17 +194,32 @@ def _audio_expr(main: str, extras, pref: str) -> str:
 
 
 def build_format(preset: str, audio_lang: str = '', extra_langs=(),
-                 container: str = 'AUTO') -> str:
+                 container: str = 'AUTO', has_ffmpeg: bool = True) -> str:
     """Compose a format selector.
 
     Preference order: honour container + language, then drop the container
     constraint, then the extra languages, then the language, and only then the
     height cap - so the most specific request that the media can satisfy wins.
+
+    Without ffmpeg nothing can be merged, so only streams that already carry
+    audio are eligible.  That caps YouTube at 720p, but it downloads instead of
+    failing with "you have requested merging of multiple formats".
     """
     spec, kind = QUALITY_PRESETS.get(preset, next(iter(QUALITY_PRESETS.values())))
     main = audio_code(audio_lang)
     extras = [c for c in parse_langs(extra_langs) if c and c != main]
     vpref, apref = CONTAINER_PREFS.get(container, ('', ''))
+
+    if not has_ffmpeg:
+        if kind in ('mp3', 'm4a', 'audio'):
+            # no converting either; take the best ready-made audio stream
+            lang = f'[language^={main}]' if main else ''
+            chain = ([f'ba{lang}[ext=m4a]', f'ba{lang}'] if lang else []) + \
+                ['ba[ext=m4a]', 'ba', 'b']
+            return '/'.join(dict.fromkeys(chain))
+        cap_only = f'[height<={spec}]' if isinstance(spec, int) else ''
+        chain = [f'b{cap_only}[ext=mp4]', f'b{cap_only}', 'b']
+        return '/'.join(dict.fromkeys(c for c in chain if c))
 
     if kind in ('mp3', 'm4a', 'audio'):
         # a single audio file cannot carry several tracks
@@ -284,8 +299,96 @@ def archive_name(settings: dict) -> str:
     return f'{ARCHIVE_PREFIX}-{safe}.txt'.lower()
 
 
+# ffmpeg installed by the app itself lands beside the executable, which is not
+# on PATH, so make sure that directory is searched too.
+def app_dir() -> str:
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return _HERE
+
+
+def _register_local_ffmpeg() -> None:
+    local = os.path.join(app_dir(), 'ffmpeg')
+    for candidate in (app_dir(), local):
+        if os.path.isfile(os.path.join(candidate, 'ffmpeg.exe')):
+            current = os.environ.get('PATH', '')
+            if candidate not in current.split(os.pathsep):
+                os.environ['PATH'] = candidate + os.pathsep + current
+            return
+
+
+_register_local_ffmpeg()
+
+FFMPEG_ZIP = ('https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/'
+              'ffmpeg-master-latest-win64-gpl.zip')
+
+
 def ffmpeg_available() -> bool:
     return shutil.which('ffmpeg') is not None
+
+
+def install_ffmpeg(on_log) -> bool:
+    """Fetch ffmpeg for this machine. Tries winget, then a direct download."""
+    import subprocess
+    import zipfile
+
+    if os.name == 'nt':
+        on_log('trying winget...')
+        try:
+            proc = subprocess.run(
+                ['winget', 'install', '--id', 'Gyan.FFmpeg', '-e', '--silent',
+                 '--accept-source-agreements', '--accept-package-agreements'],
+                capture_output=True, text=True, timeout=900,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            if proc.returncode == 0:
+                on_log('winget finished - restart the app to pick it up')
+                return True
+            on_log(f'winget could not do it (exit {proc.returncode}), downloading instead')
+        except (OSError, subprocess.SubprocessError) as exc:
+            on_log(f'winget unavailable ({exc.__class__.__name__}), downloading instead')
+
+    target = os.path.join(app_dir(), 'ffmpeg')
+    try:
+        os.makedirs(target, exist_ok=True)
+        archive = os.path.join(target, 'ffmpeg.zip')
+        on_log('downloading ffmpeg (about 160 MB, one time)...')
+
+        import urllib.request
+        with urllib.request.urlopen(FFMPEG_ZIP, timeout=120) as response, \
+                open(archive, 'wb') as fh:
+            total = int(response.headers.get('Content-Length') or 0)
+            done = 0
+            step = max(1, total // 20) if total else 8 << 20
+            nxt = step
+            while True:
+                chunk = response.read(1 << 20)
+                if not chunk:
+                    break
+                fh.write(chunk)
+                done += len(chunk)
+                if done >= nxt:
+                    nxt += step
+                    if total:
+                        on_log(f'  {done * 100 // total}%  ({done >> 20} MB)')
+
+        on_log('extracting...')
+        with zipfile.ZipFile(archive) as zf:
+            for member in zf.namelist():
+                name = os.path.basename(member)
+                if name in ('ffmpeg.exe', 'ffprobe.exe'):
+                    with zf.open(member) as src, open(os.path.join(target, name), 'wb') as dst:
+                        shutil.copyfileobj(src, dst)
+        os.remove(archive)
+
+        _register_local_ffmpeg()
+        if ffmpeg_available():
+            on_log(f'ffmpeg ready in {target}')
+            return True
+        on_log('ffmpeg still not visible after install')
+        return False
+    except Exception as exc:  # noqa: BLE001 - reported in the console
+        on_log(f'ffmpeg install failed: {exc}')
+        return False
 
 
 # --------------------------------------------------------------------------- #
@@ -594,8 +697,9 @@ def build_opts(item: DownloadItem, settings: dict, hooks: dict) -> dict:
     _spec, kind = QUALITY_PRESETS.get(preset, next(iter(QUALITY_PRESETS.values())))
     extras = parse_langs(settings.get('audio_extra', '')) if kind == 'video' else []
     container = settings.get('container', 'AUTO')
-    selector = build_format(preset, settings.get('audio_lang', ''), extras, container)
     has_ffmpeg = ffmpeg_available()
+    selector = build_format(preset, settings.get('audio_lang', ''), extras, container,
+                            has_ffmpeg)
 
     opts = _base_opts(settings, hooks.get('log'))
     opts.update({
@@ -767,8 +871,20 @@ def download_item(item: DownloadItem, settings: dict, on_progress, on_log,
     opts = build_opts(item, settings, hooks)
 
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(item.url, download=True)
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(item.url, download=True)
+        except DownloadError as err:
+            # Most sites stopped serving pre-merged streams, so without ffmpeg
+            # there is simply nothing downloadable. Say that plainly instead of
+            # letting "requested format is not available" reach the user.
+            text = str(err)
+            if not ffmpeg_available() and ('not available' in text or 'merging' in text):
+                raise DownloadError(
+                    'ffmpeg is required for this site. It serves video and audio as '
+                    'separate streams and they have to be merged. Install it with:  '
+                    'winget install Gyan.FFmpeg  (then restart the app)') from None
+            raise
         if info:
             item.title = info.get('title') or item.title
             item.video_id = info.get('id') or item.video_id

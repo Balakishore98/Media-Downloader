@@ -31,9 +31,15 @@ python -m pip install -r requirements.txt
 winget install Gyan.FFmpeg
 ```
 
-Without ffmpeg the app still runs, but it can only take single pre-merged streams
-(usually capped at 720p) and cannot convert to MP3 or embed thumbnails and
-subtitles. The header shows an amber `NO FFMPEG` light when it is missing.
+**ffmpeg is not optional for most sites.** YouTube and others hand out video and
+audio as separate streams that have to be merged, and they have stopped serving
+pre-merged ones - so without ffmpeg those downloads simply fail.
+
+The app handles this itself: when ffmpeg is missing the header shows an amber
+`NO FFMPEG` light next to an **INSTALL FFMPEG** button. One click installs it
+(winget if available, otherwise a direct download placed beside the app). Sites
+that still serve ready-made streams keep working in the meantime, capped at
+whatever quality they offer.
 
 ## Building a standalone `.exe`
 
