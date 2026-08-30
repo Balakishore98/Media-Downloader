@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MediaForge</string>
+    <string name="tagline">MEDIA ACQUISITION SUITE</string>
+    <string name="hint_url">Paste a video, playlist or profile link</string>
+    <string name="analyze">ANALYZE</string>
+    <string name="execute">EXECUTE</string>
+    <string name="abort">ABORT</string>
+    <string name="clear">CLEAR</string>
+</resources>

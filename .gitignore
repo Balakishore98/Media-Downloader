@@ -2,3 +2,10 @@ build/
 dist/
 *.spec
 __pycache__/
+
+# Android
+android/local.properties
+android/.gradle/
+android/build/
+android/app/build/
+*.apk
