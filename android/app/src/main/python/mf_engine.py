@@ -21,7 +21,9 @@ from yt_dlp.utils import DownloadCancelled
 # re-encoding anything, which is why the selectors below insist on those.
 VIDEO_ONLY = 'bv*[vcodec^=avc1]{cap}'
 AUDIO_ONLY = 'ba[ext=m4a]{lang}/ba[acodec^=mp4a]{lang}/ba[ext=m4a]/ba'
-PROGRESSIVE = 'b[vcodec^=avc1][acodec!=none]{cap}/b[acodec!=none]{cap}/b'
+# The last resort is the *smallest* stream, not the best: asking for 480p on
+# mobile data and silently getting 4K is worse than getting something small.
+PROGRESSIVE = 'b[vcodec^=avc1][acodec!=none]{cap}/b[acodec!=none]{cap}/w'
 
 QUALITY_CAPS = {
     'MAX': None,

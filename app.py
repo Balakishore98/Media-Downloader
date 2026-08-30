@@ -869,7 +869,6 @@ class App(tk.Tk):
                          'conversion, thumbnail/subtitle embedding and container choice are '
                          'unavailable. Install it for full quality: winget install '
                          'Gyan.FFmpeg', 'warn')
-            preset = self.run_settings.get('quality', '')
             if str(self.run_settings.get('audio_lang', '')) not in ('', AUTO_AUDIO):
                 self.console('audio track selection needs ffmpeg \u2014 the stream\'s own '
                              'audio will be used', 'warn')
@@ -891,9 +890,13 @@ class App(tk.Tk):
 
     def submit(self, items):
         """Queue *items* on the running executor and track their futures."""
-        if self.executor is None:
+        if self.executor is None or not self.running or self.cancel_event.is_set():
             return []
-        futures = [self.executor.submit(self._download_worker, it) for it in items]
+        try:
+            futures = [self.executor.submit(self._download_worker, it) for it in items]
+        except RuntimeError:
+            # the executor is already shutting down after an abort
+            return []
         with self.futures_lock:
             self.futures.extend(futures)
         return futures
@@ -920,12 +923,20 @@ class App(tk.Tk):
             self.events.put(('log', f'✗ {item.display_title or item.url} — {item.error}',
                              'err'))
         finally:
+            # force is a one-shot: honour it for this run, then forget it so a
+            # later plain requeue does not silently overwrite files again
+            item.force = False
             self.mark_dirty(item)
 
     def _await_batch(self, futures):
         pending = list(futures)
         while pending:
-            wait(pending)
+            # Poll rather than block outright. A future cancelled while the
+            # executor shuts down is never handed to a worker, so it never
+            # notifies the waiter that wait() installs - done() flips to True
+            # but an open-ended wait() sits there forever and the batch never
+            # reports finishing.
+            wait(pending, timeout=0.25)
             with self.futures_lock:
                 self.futures = [f for f in self.futures if not f.done()]
                 pending = list(self.futures)
@@ -939,13 +950,12 @@ class App(tk.Tk):
         self.led_state.set('ABORTING', C['amber'])
         self.set_status('ABORTING')
         self.console('abort requested — closing active transfers', 'warn')
-        with self.futures_lock:
-            for fut in self.futures:
-                fut.cancel()
+        # Deliberately not cancelling the queued futures: each worker checks
+        # the cancel flag first and returns immediately, which retires them
+        # cleanly. Cancelling them instead strands whoever is waiting on them.
         if self.executor:
             threading.Thread(target=self.executor.shutdown,
-                             kwargs={'wait': False, 'cancel_futures': True},
-                             daemon=True).start()
+                             kwargs={'wait': False}, daemon=True).start()
 
     def _batch_finished(self):
         self.running = False
@@ -983,7 +993,7 @@ class App(tk.Tk):
                                      f'this profile. Right-click ▸ Force re-download to '
                                      f'fetch it anyway.', 'warn')
                 elif kind == 'items':
-                    items, label, _url = event[1], event[2], event[3]
+                    items, label = event[1], event[2]
                     if len(items) > LARGE_COLLECTION and not messagebox.askyesno(
                             APP_NAME,
                             f'"{label}" holds {len(items)} media items.\n\n'
