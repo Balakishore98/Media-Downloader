@@ -147,6 +147,20 @@ def apply(root: tk.Misc) -> Fonts:
               foreground=[('selected', C['text_hi']), ('active', C['text_hi'])],
               background=[('active', C['panel'])])
 
+    # a checkbutton sitting on the window background rather than a panel
+    style.configure('Bg.TCheckbutton', background=C['bg'], foreground=C['text'],
+                    font=fonts.ui, indicatorbackground=C['inset'],
+                    indicatorforeground=C['accent'], indicatorsize=11,
+                    indicatormargin=(1, 1, 6, 1), upperbordercolor=C['border_hi'],
+                    lowerbordercolor=C['border_hi'], focuscolor=C['bg'], padding=2)
+    style.map('Bg.TCheckbutton',
+              indicatorbackground=[('selected', C['inset']), ('active', C['panel_alt'])],
+              indicatorforeground=[('selected', C['accent'])],
+              upperbordercolor=[('selected', C['accent'])],
+              lowerbordercolor=[('selected', C['accent'])],
+              foreground=[('selected', C['text_hi']), ('active', C['text_hi'])],
+              background=[('active', C['bg'])])
+
     # ---- buttons ----------------------------------------------------------
     style.configure('TButton', background=C['panel_alt'], foreground=C['text'],
                     bordercolor=C['border_hi'], lightcolor=C['panel_alt'],

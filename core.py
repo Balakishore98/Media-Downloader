@@ -194,7 +194,8 @@ def _audio_expr(main: str, extras, pref: str) -> str:
 
 
 def build_format(preset: str, audio_lang: str = '', extra_langs=(),
-                 container: str = 'AUTO', has_ffmpeg: bool = True) -> str:
+                 container: str = 'AUTO', has_ffmpeg: bool = True,
+                 height_override=None) -> str:
     """Compose a format selector.
 
     Preference order: honour container + language, then drop the container
@@ -206,6 +207,9 @@ def build_format(preset: str, audio_lang: str = '', extra_langs=(),
     failing with "you have requested merging of multiple formats".
     """
     spec, kind = QUALITY_PRESETS.get(preset, next(iter(QUALITY_PRESETS.values())))
+    # an exact height picked from what the media really offers beats the preset
+    if height_override and kind == 'video':
+        spec = int(height_override)
     main = audio_code(audio_lang)
     extras = [c for c in parse_langs(extra_langs) if c and c != main]
     vpref, apref = CONTAINER_PREFS.get(container, ('', ''))
@@ -289,6 +293,8 @@ def archive_name(settings: dict) -> str:
         slug = f'AUDIO-{tail.strip()}'
 
     parts = [slug]
+    if settings.get('height_override'):
+        parts.append(f"{settings['height_override']}p")
     lang = audio_code(settings.get('audio_lang', ''))
     if lang:
         parts.append(lang)
@@ -710,6 +716,83 @@ def probe_tracks(url: str, settings: dict, log=None) -> dict:
     }
 
 
+LANGUAGE_NAMES = {v: k.split('\u00b7')[0].strip() for k, v in AUDIO_LANGUAGES.items() if v}
+
+
+def language_name(code: str) -> str:
+    """'ta' -> 'Tamil', falling back to the bare code."""
+    return LANGUAGE_NAMES.get(code, code)
+
+
+def probe_formats(url: str, settings: dict, log=None) -> dict:
+    """What a single media actually offers.
+
+    Returns the resolutions really on the server with their sizes, the dubbed
+    audio languages that exist, and the subtitle languages - so the UI can ask
+    about real choices instead of guessing and silently falling back.
+    """
+    opts = _base_opts(settings, log)
+    opts.update({'skip_download': True, 'noplaylist': True})
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+    if not info:
+        raise DownloadError(f'Nothing could be extracted from {url}')
+
+    formats = info.get('formats') or []
+
+    # best audio size per language, used to estimate a merged file
+    audio_langs: dict[str, str] = {}
+    audio_sizes: dict[str, int] = {}
+    best_audio = 0
+    for fmt in formats:
+        if fmt.get('acodec') in (None, 'none'):
+            continue
+        size = fmt.get('filesize') or fmt.get('filesize_approx') or 0
+        best_audio = max(best_audio, size)
+        code = fmt.get('language')
+        if code:
+            audio_langs.setdefault(code, (fmt.get('format_note') or '').split(',')[0])
+            audio_sizes[code] = max(audio_sizes.get(code, 0), size)
+
+    # one row per height, keeping the largest (best) variant of each
+    heights: dict[int, dict] = {}
+    for fmt in formats:
+        if fmt.get('vcodec') in (None, 'none'):
+            continue
+        height = fmt.get('height')
+        if not height:
+            continue
+        size = fmt.get('filesize') or fmt.get('filesize_approx') or 0
+        progressive = fmt.get('acodec') not in (None, 'none')
+        row = heights.setdefault(height, {
+            'height': height, 'width': fmt.get('width'), 'size': 0,
+            'ext': fmt.get('ext'), 'vcodec': '', 'note': fmt.get('format_note') or '',
+            'progressive': False,
+        })
+        if size > row['size']:
+            row.update({'size': size, 'ext': fmt.get('ext'),
+                        'vcodec': (fmt.get('vcodec') or '').split('.')[0],
+                        'width': fmt.get('width') or row['width'],
+                        'note': fmt.get('format_note') or row['note']})
+        row['progressive'] = row['progressive'] or progressive
+
+    for row in heights.values():
+        # a merged file is the video stream plus one audio stream
+        row['total'] = row['size'] + (0 if row['progressive'] else best_audio)
+
+    return {
+        'title': info.get('title') or url,
+        'duration': info.get('duration'),
+        'default_language': info.get('language') or '',
+        'heights': sorted(heights.values(), key=lambda r: r['height'], reverse=True),
+        'languages': audio_langs,
+        'language_sizes': audio_sizes,
+        'subtitles': sorted(info.get('subtitles') or {}),
+        'automatic_captions': sorted(info.get('automatic_captions') or {}),
+        'best_audio_size': best_audio,
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Building engine options for one item
 # --------------------------------------------------------------------------- #
@@ -760,7 +843,7 @@ def build_opts(item: DownloadItem, settings: dict, hooks: dict) -> dict:
     container = settings.get('container', 'AUTO')
     has_ffmpeg = ffmpeg_available()
     selector = build_format(preset, settings.get('audio_lang', ''), extras, container,
-                            has_ffmpeg)
+                            has_ffmpeg, settings.get('height_override'))
 
     opts = _base_opts(settings, hooks.get('log'))
     opts.update({
@@ -962,7 +1045,7 @@ def download_item(item: DownloadItem, settings: dict, on_progress, on_log,
             streams = info.get('requested_formats') or [info]
             heights = [f.get('height') for f in streams if f.get('height')]
             item.height = max(heights) if heights else None
-            cap = height_cap(settings.get('quality', ''))
+            cap = settings.get('height_override') or height_cap(settings.get('quality', ''))
             if cap and item.height and item.height > cap:
                 on_log(f'WARNING: {item.display_title}: nothing at or below {cap}p was '
                        f'available - took {item.height}p instead')

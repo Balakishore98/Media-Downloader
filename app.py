@@ -25,6 +25,7 @@ from tkinter import filedialog, messagebox, ttk
 
 import theme
 from theme import C, Card, LED, Sparkline, Tip
+from chooser import FormatChooser
 from core import (
     APP_NAME,
     APP_TAGLINE,
@@ -85,6 +86,8 @@ DEFAULTS = {
     'overwrite': False,
     'include_id': False,
     'quality_in_name': True,
+    'ask_before_download': True,
+    'height_override': None,
     'platform_folder': False,
     'playlist_folder': True,
     'number_playlist_items': True,
@@ -124,8 +127,10 @@ def load_settings() -> dict:
 def save_settings(data: dict) -> None:
     try:
         os.makedirs(CONFIG_DIR, exist_ok=True)
+        keep = {k: v for k, v in data.items() if k in DEFAULTS}
+        keep.pop('height_override', None)   # chosen per batch, never remembered
         with open(CONFIG_PATH, 'w', encoding='utf-8') as fp:
-            json.dump({k: v for k, v in data.items() if k in DEFAULTS}, fp, indent=2)
+            json.dump(keep, fp, indent=2)
     except OSError:
         pass
 
@@ -208,6 +213,8 @@ class App(tk.Tk):
         self.session_bytes = 0
         self.session_start = 0.0
         self._spark_tick = 0
+        self.pending_prompt = False
+        self.analyze_added: list = []
 
         self._build_ui()
         self.protocol('WM_DELETE_WINDOW', self.on_close)
@@ -371,6 +378,10 @@ class App(tk.Tk):
              'Keeps an archive file in the output folder.\nRe-running a playlist then '
              'fetches only what is new.'),
             ('overwrite', 'Overwrite existing files', None),
+            ('ask_before_download', 'Ask what to fetch after ANALYZE',
+             'Shows the resolutions, audio languages and subtitles the\n'
+             'media really offers, instead of guessing up front and\n'
+             'quietly falling back when a language is not there.'),
         ])
 
         # ---- FORMAT
@@ -769,6 +780,8 @@ class App(tk.Tk):
                              f'SESSION COOKIES in the sidebar if extraction fails.', 'warn')
 
         self.url_text.delete('1.0', 'end')
+        self.pending_prompt = bool(settings.get('ask_before_download'))
+        self.analyze_added = []
         for url in urls:
             self.expanding += 1
             threading.Thread(target=self._expand_worker, args=(url, settings),
@@ -834,6 +847,35 @@ class App(tk.Tk):
             self.tree.item(iid, values=self.row_values(item), tags=self.row_tags(item))
 
     # --------------------------------------------------------- execution ---
+    def ask_what_to_fetch(self):
+        """Offer the choices this media actually has, once analysis is done."""
+        queued = [i for i in self.analyze_added if i.status == STATUS_QUEUED]
+        self.analyze_added = []
+        if not queued or self.running:
+            return
+        dialog = FormatChooser(self, queued[0].url, self.collect_settings(),
+                               self.fonts, batch_size=len(queued))
+        self.wait_window(dialog)
+        if dialog.result is None:
+            self.console('kept the current settings', 'dim')
+            return
+        self.apply_choice(dialog.result)
+
+    def apply_choice(self, chosen: dict):
+        """Push the dialog's answer back onto the sidebar so it stays visible."""
+        self.settings['height_override'] = chosen.get('height_override')
+        for key in ('quality', 'audio_lang', 'container', 'subtitles', 'sub_langs'):
+            if key in chosen and key in self.var:
+                try:
+                    self.var[key].set(chosen[key])
+                except tk.TclError:
+                    pass
+        height = chosen.get('height_override')
+        self.console(
+            f'selected: {height}p' if height else f'selected: {chosen.get("quality")}', 'ok')
+        if chosen.get('audio_lang') and chosen['audio_lang'] != AUTO_AUDIO:
+            self.console(f'audio track: {chosen["audio_lang"]}', 'ok')
+
     def start(self):
         pending = [self.items[u] for u in self.order if self.items[u].status == STATUS_QUEUED]
         if not pending:
@@ -843,6 +885,7 @@ class App(tk.Tk):
             return
 
         self.run_settings = self.collect_settings()
+        self.run_settings['height_override'] = self.settings.get('height_override')
         outdir = self.run_settings.get('outdir') or DEFAULT_OUTDIR
         try:
             os.makedirs(outdir, exist_ok=True)
@@ -1009,6 +1052,7 @@ class App(tk.Tk):
                     else:
                         self.console(f'queued  {label}', 'ok')
                     self.renumber()
+                    self.analyze_added.extend(added)
                     if self.running and added:
                         self.submit(added)
                         self.console(f'{len(added)} item(s) joined the running batch', 'dim')
@@ -1018,6 +1062,9 @@ class App(tk.Tk):
                     self._ffmpeg_installed(event[1])
                 elif kind == 'expand_done':
                     self.expanding = max(0, self.expanding - 1)
+                    if self.expanding == 0 and self.pending_prompt:
+                        self.pending_prompt = False
+                        self.after(60, self.ask_what_to_fetch)
                 elif kind == 'batch_done':
                     self._batch_finished()
         except queue.Empty:

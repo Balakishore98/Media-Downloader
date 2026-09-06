@@ -204,6 +204,34 @@ set to Tamil gives you a Tamil-dubbed MP3.
 
 ## The interface
 
+### Choosing what to fetch
+
+After ANALYZE, MediaForge asks — using what the media **actually** offers rather
+than what you guessed:
+
+```
+Escape 100 Cops, Win $500,000
+20:28  ·  what this media actually offers
+
+QUALITY     RESOLUTION    CODEC   APPROX SIZE
+            3840x2160     vp9          2.3 GB   video+audio
+            1920x1080     avc1       464.2 MB   video+audio
+            1280x720      avc1       164.1 MB   video+audio
+            audio only    m4a/mp3      9.4 MB
+
+AUDIO       Tamil  ·  ta                    CONTAINER  mp4
+[x] Subtitles   LANGS  ta,en
+available: ar, bn, de, en, es, fil, fr, hi, id, it, ja, ko, ml, mr …
+```
+
+Real resolutions with real sizes, and only the dubbed audio tracks that exist —
+the original is marked. Pick a language that is not on offer and you cannot,
+which is the point: previously the app silently fell back to English. For a
+playlist the answer applies to the whole batch.
+
+Turn it off with **OUTPUT ▸ Ask what to fetch after ANALYZE** to go straight
+from the sidebar settings as before.
+
 **INTAKE** — one URL per line, any mix of platforms. `Ctrl+Enter` is the same as
 pressing **ANALYZE**. Analysis resolves each link and expands collections; adding
 a link that expands past 150 items asks for confirmation first, so a channel with
