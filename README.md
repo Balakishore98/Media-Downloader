@@ -98,11 +98,19 @@ Every Instagram URL form is supported:
 | `instagram.com/reel/<id>/` | single reel |
 | `instagram.com/tv/<id>/` | IGTV video |
 | `instagram.com/stories/<user>/` | that user's stories |
-| `instagram.com/<user>/` | **the profile's whole feed**, expanded like a playlist |
+| `instagram.com/<user>/` | **not currently possible** - see below |
 
-Reels and single posts download **without signing in**. Profiles and stories do
-not - Instagram blocks those for logged-out clients, and the app now says so
-outright instead of reporting a generic extraction failure:
+Reels and single posts download **without signing in**, public or not.
+
+Whole profiles do not work at all. This is not about a profile being private:
+the engine's `instagram:user` extractor is disabled upstream because Instagram
+changed the API it relied on, so signing in does not help either. Verified
+against `nasa` and `natgeo` - maximally public accounts - which fail exactly
+like any other. Download individual reels and posts instead.
+
+Stories are a different case: that extractor works, but Instagram serves nothing
+to logged-out clients, so cookies genuinely do fix it. The app tells the two
+apart rather than blaming a missing login for both:
 
 ```
 [instagram:story] You need to log in to access this content

@@ -553,6 +553,15 @@ def _base_opts(settings: dict, log=None) -> dict:
 
 def _extraction_failure(url: str, settings: dict, engine_errors: list) -> str:
     """A message that says what went wrong and what to do about it."""
+    # An extractor the engine has disabled will not start working because you
+    # signed in, so this case must be reported before the login advice.
+    if any('marked as broken' in str(e) for e in engine_errors):
+        tag = platform_of(url)[0]
+        return (f'Support for this kind of {tag.title()} link is currently broken in the '
+                f'extraction engine - the site changed and the engine has disabled it. '
+                f'Signing in will not help. Individual posts and reels still work; '
+                f'paste those links instead.')
+
     reason = ''
     if engine_errors:
         reason = engine_errors[-1]
@@ -600,7 +609,7 @@ def expand_url(url: str, settings: dict, log=None) -> tuple[list[DownloadItem], 
 
     def capture(message):
         text = str(message)
-        if 'ERROR' in text:
+        if 'ERROR' in text or 'marked as broken' in text:
             engine_errors.append(text)
         if original_log is not None:
             original_log(text)
