@@ -81,4 +81,6 @@ dependencies {
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    // Android has no MP3 encoder of its own, so LAME comes along
+    implementation("io.github.lijieqing:lame:1.0.1032")
 }

@@ -61,6 +61,9 @@ class MainActivity : AppCompatActivity() {
     private var heightOverride = 0
     private var audioOverride = ""
 
+    /** Audio-only picks: convert the downloaded AAC to MP3 with the bundled LAME. */
+    private var wantMp3 = false
+
     private val qualities = listOf("MAX", "1080p", "720p", "480p", "360p", "AUDIO")
 
     /** Chaquopy calls these from Python while a download is in flight. */
@@ -252,14 +255,17 @@ class MainActivity : AppCompatActivity() {
                 picks.add(h)
                 if (i == 0) button.isChecked = true
             }
-            val audioButton = RadioButton(this@MainActivity).apply {
-                id = View.generateViewId()
-                text = "audio only  ·  m4a"
-                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text))
-                textSize = 13f
+            for ((label, marker) in listOf("audio only  ·  m4a (original)" to 0,
+                                           "audio only  ·  mp3 (converted)" to -1)) {
+                val audioButton = RadioButton(this@MainActivity).apply {
+                    id = View.generateViewId()
+                    text = label
+                    setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text))
+                    textSize = 13f
+                }
+                view.qualityGroup.addView(audioButton)
+                picks.add(marker)
             }
-            view.qualityGroup.addView(audioButton)
-            picks.add(0)
 
             val languages = o.optJSONObject("languages") ?: JSONObject()
             val original = o.optString("default_language")
@@ -286,14 +292,16 @@ class MainActivity : AppCompatActivity() {
             ok.setOnClickListener {
                 val index = view.qualityGroup.indexOfChild(
                     view.qualityGroup.findViewById(view.qualityGroup.checkedRadioButtonId))
-                heightOverride = if (index in picks.indices) picks[index] else 0
-                val audioOnly = index == picks.lastIndex
+                val marker = if (index in picks.indices) picks[index] else 0
+                wantMp3 = marker == -1
+                heightOverride = if (marker > 0) marker else 0
+                val audioOnly = marker <= 0
                 audioOverride = codes.getOrElse(view.audioSpinner.selectedItemPosition) { "" }
                 binding.audioLangInput.setText(audioOverride)
                 binding.qualitySpinner.setSelection(
                     if (audioOnly) qualities.indexOf("AUDIO").coerceAtLeast(0)
                     else binding.qualitySpinner.selectedItemPosition)
-                log(if (audioOnly) "selected: audio only"
+                log(if (audioOnly) "selected: audio only  ·  ${if (wantMp3) "mp3" else "m4a"}"
                     else "selected: ${heightOverride}p" +
                          (if (audioOverride.isNotEmpty()) "  ·  audio $audioOverride" else ""),
                     R.color.green)
@@ -352,6 +360,27 @@ class MainActivity : AppCompatActivity() {
         }
 
         var path = o.optString("path")
+
+        if (wantMp3 && !o.optBoolean("needs_mux") && path.isNotEmpty()) {
+            item.status = "ENCODING"
+            item.detail = "converting to mp3"
+            adapter.notifyItemChanged(position)
+            val encoded = withContext(Dispatchers.IO) {
+                runCatching {
+                    val target = path.substringBeforeLast('.') + ".mp3"
+                    val made = Mp3Encoder.encode(path, target)
+                    File(path).delete()
+                    made
+                }
+            }
+            if (encoded.isSuccess) {
+                path = encoded.getOrThrow()
+            } else {
+                log("mp3 conversion failed, keeping the original audio: " +
+                    "${encoded.exceptionOrNull()?.message}", R.color.amber)
+            }
+        }
+
         if (o.optBoolean("needs_mux")) {
             item.status = "MUXING"
             item.detail = "combining video + audio"
@@ -390,8 +419,11 @@ class MainActivity : AppCompatActivity() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val values = ContentValues().apply {
                     put(MediaStore.Downloads.DISPLAY_NAME, file.name)
-                    put(MediaStore.Downloads.MIME_TYPE,
-                        if (file.extension == "m4a") "audio/mp4" else "video/mp4")
+                    put(MediaStore.Downloads.MIME_TYPE, when (file.extension) {
+                        "m4a" -> "audio/mp4"
+                        "mp3" -> "audio/mpeg"
+                        else -> "video/mp4"
+                    })
                     put(MediaStore.Downloads.RELATIVE_PATH,
                         Environment.DIRECTORY_DOWNLOADS + "/MediaForge")
                 }
