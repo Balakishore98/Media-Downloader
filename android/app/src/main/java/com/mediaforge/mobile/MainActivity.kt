@@ -12,7 +12,9 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
+import android.widget.RadioButton
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
@@ -22,6 +24,7 @@ import com.chaquo.python.PyObject
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import com.mediaforge.mobile.databinding.ActivityMainBinding
+import com.mediaforge.mobile.databinding.DialogChooserBinding
 import com.mediaforge.mobile.databinding.ItemMediaBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -53,6 +56,10 @@ class MainActivity : AppCompatActivity() {
     private val items = mutableListOf<MediaItem>()
     private val cancelled = AtomicBoolean(false)
     private var running = false
+
+    /** Chosen from what the media really offers; 0 means "use the spinner". */
+    private var heightOverride = 0
+    private var audioOverride = ""
 
     private val qualities = listOf("MAX", "1080p", "720p", "480p", "360p", "AUDIO")
 
@@ -182,6 +189,114 @@ class MainActivity : AppCompatActivity() {
                 else "queued ${o.optString("title")}", R.color.green)
             setBusy(false, "IDLE")
             updateOverall()
+            if (added > 0) askWhatToFetch(items.first { it.status == "QUEUED" }.url,
+                                          items.count { it.status == "QUEUED" })
+        }
+    }
+
+
+    /**
+     * Ask using the resolutions and dubbed tracks the media actually has.
+     *
+     * The old flow made you pick a quality and a language up front and quietly
+     * substituted whatever existed, so asking for Tamil could hand back English
+     * without a word.
+     */
+    private fun askWhatToFetch(url: String, count: Int) {
+        val view = DialogChooserBinding.inflate(layoutInflater)
+        val dialog = AlertDialog.Builder(this)
+            .setView(view.root)
+            .setCancelable(true)
+            .setNegativeButton("KEEP CURRENT", null)
+            .setPositiveButton("USE THIS", null)
+            .create()
+        dialog.show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = false
+
+        lifecycleScope.launch {
+            val json = withContext(Dispatchers.IO) {
+                runCatching { engine().callAttr("probe_formats", url, null).toString() }
+                    .getOrElse { """{"ok":false,"error":"${it.message}"}""" }
+            }
+            val o = runCatching { JSONObject(json) }.getOrNull()
+            if (o == null || !o.optBoolean("ok")) {
+                view.chooserTitle.text = "Could not read the media"
+                view.chooserSub.text = o?.optString("error")?.take(140) ?: ""
+                return@launch
+            }
+
+            view.chooserTitle.text = o.optString("title")
+            val secs = o.optInt("duration")
+            view.chooserSub.text =
+                if (secs > 0) "%d:%02d  ·  what this media offers".format(secs / 60, secs % 60)
+                else "what this media offers"
+
+            val heights = o.getJSONArray("heights")
+            val picks = mutableListOf<Int>()
+            for (i in 0 until heights.length()) {
+                val row = heights.getJSONObject(i)
+                val h = row.optInt("height")
+                val w = row.optInt("width")
+                val total = row.optLong("total")
+                val size = if (total > 0) "  ·  %.0f MB".format(total / 1024.0 / 1024.0) else ""
+                val kind = if (row.optBoolean("progressive")) "" else "  ·  video+audio"
+                val button = RadioButton(this@MainActivity).apply {
+                    id = View.generateViewId()
+                    text = "${w}x$h$size$kind"
+                    setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text))
+                    textSize = 13f
+                }
+                view.qualityGroup.addView(button)
+                picks.add(h)
+                if (i == 0) button.isChecked = true
+            }
+            val audioButton = RadioButton(this@MainActivity).apply {
+                id = View.generateViewId()
+                text = "audio only  ·  m4a"
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text))
+                textSize = 13f
+            }
+            view.qualityGroup.addView(audioButton)
+            picks.add(0)
+
+            val languages = o.optJSONObject("languages") ?: JSONObject()
+            val original = o.optString("default_language")
+            val codes = mutableListOf("")
+            val labels = mutableListOf("AUTO  ·  original track")
+            for (code in languages.keys()) {
+                codes.add(code)
+                labels.add(languages.optString(code) + "  ·  " + code +
+                           if (code == original) "   (original)" else "")
+            }
+            view.audioSpinner.adapter = ArrayAdapter(
+                this@MainActivity, android.R.layout.simple_spinner_dropdown_item, labels)
+            view.audioSpinner.isEnabled = labels.size > 1
+            view.chooserNote.text = when {
+                labels.size > 1 && count > 1 ->
+                    "${labels.size - 1} dubbed tracks  ·  applies to all $count items"
+                labels.size > 1 -> "${labels.size - 1} dubbed audio tracks available"
+                count > 1 -> "single audio track  ·  applies to all $count items"
+                else -> "single audio track, no dubs offered"
+            }
+
+            val ok = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            ok.isEnabled = true
+            ok.setOnClickListener {
+                val index = view.qualityGroup.indexOfChild(
+                    view.qualityGroup.findViewById(view.qualityGroup.checkedRadioButtonId))
+                heightOverride = if (index in picks.indices) picks[index] else 0
+                val audioOnly = index == picks.lastIndex
+                audioOverride = codes.getOrElse(view.audioSpinner.selectedItemPosition) { "" }
+                binding.audioLangInput.setText(audioOverride)
+                binding.qualitySpinner.setSelection(
+                    if (audioOnly) qualities.indexOf("AUDIO").coerceAtLeast(0)
+                    else binding.qualitySpinner.selectedItemPosition)
+                log(if (audioOnly) "selected: audio only"
+                    else "selected: ${heightOverride}p" +
+                         (if (audioOverride.isNotEmpty()) "  ·  audio $audioOverride" else ""),
+                    R.color.green)
+                dialog.dismiss()
+            }
         }
     }
 
@@ -211,7 +326,7 @@ class MainActivity : AppCompatActivity() {
                     runCatching {
                         engine().callAttr(
                             "download", item.url, outDir.absolutePath, quality,
-                            audioLang, null, Progress(position)
+                            audioLang, null, Progress(position), heightOverride
                         ).toString()
                     }.getOrElse { """{"ok":false,"error":"${it.message}"}""" }
                 }

@@ -35,8 +35,8 @@ QUALITY_CAPS = {
 }
 
 
-def _cap(quality: str) -> str:
-    height = QUALITY_CAPS.get(quality)
+def _cap(quality: str, height_override: int = 0) -> str:
+    height = int(height_override) or QUALITY_CAPS.get(quality)
     return f'[height<={height}]' if height else ''
 
 
@@ -127,6 +127,80 @@ def audio_languages(url: str, cookies: str | None = None) -> str:
         return json.dumps({'ok': False, 'error': str(exc)})
 
 
+LANGUAGE_NAMES = {
+    'en': 'English', 'hi': 'Hindi', 'ta': 'Tamil', 'te': 'Telugu', 'ml': 'Malayalam',
+    'kn': 'Kannada', 'bn': 'Bengali', 'mr': 'Marathi', 'pa': 'Punjabi', 'ur': 'Urdu',
+    'es': 'Spanish', 'pt': 'Portuguese', 'fr': 'French', 'de': 'German', 'it': 'Italian',
+    'pl': 'Polish', 'ru': 'Russian', 'uk': 'Ukrainian', 'tr': 'Turkish', 'ar': 'Arabic',
+    'he': 'Hebrew', 'ja': 'Japanese', 'ko': 'Korean', 'id': 'Indonesian', 'th': 'Thai',
+    'vi': 'Vietnamese', 'fil': 'Filipino', 'nl': 'Dutch', 'sv': 'Swedish', 'ro': 'Romanian',
+    'el': 'Greek', 'fa': 'Persian', 'sw': 'Swahili',
+    'zh-Hans': 'Chinese (Simplified)', 'zh-Hant': 'Chinese (Traditional)',
+}
+
+
+def probe_formats(url: str, cookies: str | None = None) -> str:
+    """What a single media really offers, for the chooser. Returns JSON.
+
+    Only heights this app can actually deliver are listed: either a ready-made
+    stream, or an H.264 video track that MediaMuxer can pair with AAC audio.
+    Offering 4K that would fail at mux time helps nobody.
+    """
+    try:
+        opts = _base_opts(cookies)
+        opts.update({'skip_download': True, 'noplaylist': True})
+        with YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        if not info:
+            return json.dumps({'ok': False, 'error': 'Nothing could be extracted'})
+
+        formats = info.get('formats') or []
+
+        languages, best_audio = {}, 0
+        for fmt in formats:
+            if fmt.get('acodec') in (None, 'none'):
+                continue
+            best_audio = max(best_audio, fmt.get('filesize') or fmt.get('filesize_approx') or 0)
+            code = fmt.get('language')
+            if code and code not in languages:
+                languages[code] = LANGUAGE_NAMES.get(code, code)
+
+        heights = {}
+        for fmt in formats:
+            if fmt.get('vcodec') in (None, 'none') or not fmt.get('height'):
+                continue
+            progressive = fmt.get('acodec') not in (None, 'none')
+            muxable = str(fmt.get('vcodec', '')).startswith('avc1')
+            if not (progressive or muxable):
+                continue        # nothing this app could finish
+            size = fmt.get('filesize') or fmt.get('filesize_approx') or 0
+            row = heights.setdefault(fmt['height'], {
+                'height': fmt['height'], 'width': fmt.get('width'),
+                'size': 0, 'progressive': False,
+            })
+            if size > row['size']:
+                row['size'] = size
+                row['width'] = fmt.get('width') or row['width']
+            row['progressive'] = row['progressive'] or progressive
+
+        rows = []
+        for row in sorted(heights.values(), key=lambda r: r['height'], reverse=True):
+            row['total'] = row['size'] + (0 if row['progressive'] else best_audio)
+            rows.append(row)
+
+        return json.dumps({
+            'ok': True,
+            'title': info.get('title') or url,
+            'duration': info.get('duration') or 0,
+            'default_language': info.get('language') or '',
+            'heights': rows,
+            'languages': languages,
+            'best_audio_size': best_audio,
+        })
+    except Exception as exc:  # noqa: BLE001 - shown in the app
+        return json.dumps({'ok': False, 'error': str(exc)})
+
+
 class _Cancelled(Exception):
     pass
 
@@ -164,7 +238,7 @@ def _run(url, selector, outtmpl, cookies, listener, stage):
 
 
 def download(url: str, outdir: str, quality: str, audio_lang: str,
-             cookies: str | None, listener) -> str:
+             cookies: str | None, listener, height_override: int = 0) -> str:
     """Fetch one media.
 
     Returns JSON describing what landed on disk.  When two files come back the
@@ -173,7 +247,7 @@ def download(url: str, outdir: str, quality: str, audio_lang: str,
     try:
         os.makedirs(outdir, exist_ok=True)
         lang = f'[language^={audio_lang}]' if audio_lang else ''
-        cap = _cap(quality)
+        cap = _cap(quality, height_override)
         stem = os.path.join(outdir, '%(title).120B')
 
         if quality == 'AUDIO':
@@ -190,7 +264,7 @@ def download(url: str, outdir: str, quality: str, audio_lang: str,
             probe_info = ydl.extract_info(url, download=False)
 
         formats = probe_info.get('formats') or []
-        cap_height = QUALITY_CAPS.get(quality)
+        cap_height = int(height_override) or QUALITY_CAPS.get(quality)
 
         def usable_progressive(f):
             if f.get('acodec') in (None, 'none') or f.get('vcodec') in (None, 'none'):

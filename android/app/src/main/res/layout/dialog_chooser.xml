@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@color/panel"
+    android:padding="18dp">
+
+    <TextView
+        android:id="@+id/chooserTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:maxLines="2"
+        android:ellipsize="end"
+        android:text="reading the media…"
+        android:textColor="@color/text_hi"
+        android:textSize="15sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/chooserSub"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:textColor="@color/text_dim"
+        android:textSize="11sp"
+        android:fontFamily="monospace" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:text="QUALITY"
+        android:textColor="@color/text_dim"
+        android:textSize="10sp"
+        android:textStyle="bold" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:minHeight="120dp"
+        android:layout_marginTop="4dp"
+        android:background="@drawable/bg_inset"
+        android:padding="6dp">
+
+        <RadioGroup
+            android:id="@+id/qualityGroup"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </ScrollView>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:text="AUDIO TRACK"
+        android:textColor="@color/text_dim"
+        android:textSize="10sp"
+        android:textStyle="bold" />
+
+    <Spinner
+        android:id="@+id/audioSpinner"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:background="@drawable/bg_inset"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="6dp" />
+
+    <TextView
+        android:id="@+id/chooserNote"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:textColor="@color/text_dim"
+        android:textSize="10sp" />
+</LinearLayout>
