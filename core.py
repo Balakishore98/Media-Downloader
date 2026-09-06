@@ -757,13 +757,14 @@ def probe_formats(url: str, settings: dict, log=None) -> dict:
     # one row per height, keeping the largest (best) variant of each
     heights: dict[int, dict] = {}
     for fmt in formats:
-        if fmt.get('vcodec') in (None, 'none'):
-            continue
-        height = fmt.get('height')
-        if not height:
-            continue
+        if fmt.get('vcodec') == 'none':
+            continue        # audio-only
+        # 'none' means the stream truly lacks it; None only means the extractor
+        # could not tell. Some sites hand out ready-made files with unlabelled
+        # codecs, and skipping those hid the only thing worth downloading.
+        height = fmt.get('height') or 0
         size = fmt.get('filesize') or fmt.get('filesize_approx') or 0
-        progressive = fmt.get('acodec') not in (None, 'none')
+        progressive = fmt.get('acodec') != 'none'
         row = heights.setdefault(height, {
             'height': height, 'width': fmt.get('width'), 'size': 0,
             'ext': fmt.get('ext'), 'vcodec': '', 'note': fmt.get('format_note') or '',

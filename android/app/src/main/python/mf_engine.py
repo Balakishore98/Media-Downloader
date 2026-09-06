@@ -23,7 +23,8 @@ VIDEO_ONLY = 'bv*[vcodec^=avc1]{cap}'
 AUDIO_ONLY = 'ba[ext=m4a]{lang}/ba[acodec^=mp4a]{lang}/ba[ext=m4a]/ba'
 # The last resort is the *smallest* stream, not the best: asking for 480p on
 # mobile data and silently getting 4K is worse than getting something small.
-PROGRESSIVE = 'b[vcodec^=avc1][acodec!=none]{cap}/b[acodec!=none]{cap}/w'
+PROGRESSIVE = ('b[vcodec^=avc1][acodec!=none]{cap}/b[acodec!=none]{cap}/'
+               'b[acodec!=none]/b/w')
 
 QUALITY_CAPS = {
     'MAX': None,
@@ -167,15 +168,20 @@ def probe_formats(url: str, cookies: str | None = None) -> str:
 
         heights = {}
         for fmt in formats:
-            if fmt.get('vcodec') in (None, 'none') or not fmt.get('height'):
-                continue
-            progressive = fmt.get('acodec') not in (None, 'none')
-            muxable = str(fmt.get('vcodec', '')).startswith('avc1')
+            if fmt.get('vcodec') == 'none':
+                continue        # audio-only
+            # 'none' means the stream really lacks it; None only means the
+            # extractor could not tell. Instagram's ready-made mp4s report
+            # unknown codecs and are perfectly downloadable, so treating
+            # unknown as unusable hid the only video this app could fetch.
+            progressive = fmt.get('acodec') != 'none'
+            muxable = str(fmt.get('vcodec') or '').startswith('avc1')
             if not (progressive or muxable):
                 continue        # nothing this app could finish
             size = fmt.get('filesize') or fmt.get('filesize_approx') or 0
-            row = heights.setdefault(fmt['height'], {
-                'height': fmt['height'], 'width': fmt.get('width'),
+            height = fmt.get('height') or 0
+            row = heights.setdefault(height, {
+                'height': height, 'width': fmt.get('width'),
                 'size': 0, 'progressive': False,
             })
             if size > row['size']:
@@ -267,11 +273,13 @@ def download(url: str, outdir: str, quality: str, audio_lang: str,
         cap_height = int(height_override) or QUALITY_CAPS.get(quality)
 
         def usable_progressive(f):
-            if f.get('acodec') in (None, 'none') or f.get('vcodec') in (None, 'none'):
+            if f.get('acodec') == 'none' or f.get('vcodec') == 'none':
                 return False
             if cap_height and (f.get('height') or 0) > cap_height:
                 return False
-            return str(f.get('vcodec', '')).startswith('avc1')
+            codec = str(f.get('vcodec') or '')
+            # unknown codec = a ready-made file the extractor could not label
+            return codec.startswith('avc1') or codec == ''
 
         progressive = [f for f in formats if usable_progressive(f)]
         best_prog = max(progressive, key=lambda f: f.get('height') or 0, default=None)

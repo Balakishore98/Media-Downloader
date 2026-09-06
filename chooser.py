@@ -169,7 +169,8 @@ class FormatChooser(tk.Toplevel):
         chosen = None
         for row in info['heights']:
             size = human_bytes(row.get('total')) or '—'
-            label = f"{row.get('width') or '?'}x{row['height']}"
+            label = (f"{row['width']}x{row['height']}" if row['height'] and row.get('width')
+                     else 'original quality')
             kind = 'ready-made' if row['progressive'] else 'video+audio'
             iid = str(row['height'])
             self.qlist.insert('', 'end', iid=iid,

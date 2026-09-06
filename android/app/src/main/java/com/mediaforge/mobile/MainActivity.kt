@@ -240,9 +240,11 @@ class MainActivity : AppCompatActivity() {
                 val total = row.optLong("total")
                 val size = if (total > 0) "  ·  %.0f MB".format(total / 1024.0 / 1024.0) else ""
                 val kind = if (row.optBoolean("progressive")) "" else "  ·  video+audio"
+                // a ready-made file whose dimensions the extractor never reported
+                val label = if (h > 0 && w > 0) "${w}x$h" else "original quality"
                 val button = RadioButton(this@MainActivity).apply {
                     id = View.generateViewId()
-                    text = "${w}x$h$size$kind"
+                    text = "$label$size$kind"
                     setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text))
                     textSize = 13f
                 }
