@@ -44,8 +44,18 @@ if (Test-Path 'icon.ico') { $pyiArgs += @('--icon', 'icon.ico') }
 if ($OneDir) { $pyiArgs += '--onedir' } else { $pyiArgs += '--onefile' }
 
 if ($IncludeFFmpeg) {
-    $ffmpeg = (Get-Command ffmpeg -ErrorAction SilentlyContinue).Source
-    $ffprobe = (Get-Command ffprobe -ErrorAction SilentlyContinue).Source
+    # Prefer vendor\ if it has been populated: those builds are roughly half the
+    # size of a full static ffmpeg, which matters a lot inside a one-file exe.
+    $vendor = Join-Path $PSScriptRoot 'vendor'
+    if (Test-Path (Join-Path $vendor 'ffmpeg.exe')) {
+        $ffmpeg = Join-Path $vendor 'ffmpeg.exe'
+        $ffprobe = Join-Path $vendor 'ffprobe.exe'
+        if (-not (Test-Path $ffprobe)) { $ffprobe = $null }
+        Write-Host '  using the compact build in vendor' -ForegroundColor DarkGray
+    } else {
+        $ffmpeg = (Get-Command ffmpeg -ErrorAction SilentlyContinue).Source
+        $ffprobe = (Get-Command ffprobe -ErrorAction SilentlyContinue).Source
+    }
     if ($ffmpeg) {
         Write-Host "Bundling $ffmpeg" -ForegroundColor Green
         $pyiArgs += @('--add-binary', "$ffmpeg;.")

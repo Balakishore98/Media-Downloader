@@ -307,10 +307,24 @@ def app_dir() -> str:
     return _HERE
 
 
+def _ffmpeg_search_dirs() -> list[str]:
+    """Where a bundled or self-installed ffmpeg might be.
+
+    A one-file build unpacks its bundled binaries into sys._MEIPASS, which is a
+    temp directory - not the folder the .exe sits in - so both have to be
+    searched or a bundled ffmpeg is invisible to the app that ships it.
+    """
+    dirs = []
+    meipass = getattr(sys, '_MEIPASS', '')
+    if meipass:
+        dirs += [meipass, os.path.join(meipass, 'ffmpeg')]
+    dirs += [app_dir(), os.path.join(app_dir(), 'ffmpeg')]
+    return dirs
+
+
 def _register_local_ffmpeg() -> None:
-    local = os.path.join(app_dir(), 'ffmpeg')
-    for candidate in (app_dir(), local):
-        if os.path.isfile(os.path.join(candidate, 'ffmpeg.exe')):
+    for candidate in _ffmpeg_search_dirs():
+        if candidate and os.path.isfile(os.path.join(candidate, 'ffmpeg.exe')):
             current = os.environ.get('PATH', '')
             if candidate not in current.split(os.pathsep):
                 os.environ['PATH'] = candidate + os.pathsep + current
