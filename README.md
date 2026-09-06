@@ -100,7 +100,17 @@ Every Instagram URL form is supported:
 | `instagram.com/stories/<user>/` | that user's stories |
 | `instagram.com/<user>/` | **the profile's whole feed**, expanded like a playlist |
 
-Instagram serves almost nothing to logged-out clients, so set
+Reels and single posts download **without signing in**. Profiles and stories do
+not - Instagram blocks those for logged-out clients, and the app now says so
+outright instead of reporting a generic extraction failure:
+
+```
+[instagram:story] You need to log in to access this content
+  |  INSTAGRAM needs you to be signed in for this. Set NETWORK - AUTH >
+     SESSION COOKIES to the browser you use for Instagram, and close it first.
+```
+
+For those, set
 **NETWORK · AUTH ▸ SESSION COOKIES** to the browser you are logged into.
 Close that browser first — Chromium-based browsers lock their cookie database
 while running. MediaForge warns in the console when you queue a link from a

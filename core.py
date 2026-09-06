@@ -551,6 +551,29 @@ def _base_opts(settings: dict, log=None) -> dict:
     return opts
 
 
+def _extraction_failure(url: str, settings: dict, engine_errors: list) -> str:
+    """A message that says what went wrong and what to do about it."""
+    reason = ''
+    if engine_errors:
+        reason = engine_errors[-1]
+        for prefix in ('ERROR: ', 'ERROR:'):
+            while reason.startswith(prefix):
+                reason = reason[len(prefix):].lstrip()
+        reason = reason.split('; please report')[0].split('. See  http')[0].strip()
+
+    tag, _colour, needs_login = platform_of(url)
+    signed_in = (settings.get('cookies_browser') or 'None') != 'None' or settings.get('cookie_file')
+    lowered = reason.lower()
+    gated = 'log in' in lowered or 'login' in lowered or 'private' in lowered
+
+    if (needs_login or gated) and not signed_in:
+        hint = (f'{tag} needs you to be signed in for this. Set NETWORK - AUTH > '
+                f'SESSION COOKIES to the browser you use for {tag.title()}, and close '
+                f'that browser first.')
+        return f'{reason}  |  {hint}' if reason else hint
+    return reason or f'Nothing could be extracted from {url}'
+
+
 def expand_url(url: str, settings: dict, log=None) -> tuple[list[DownloadItem], str]:
     """Resolve *url* into concrete media items.
 
@@ -569,11 +592,26 @@ def expand_url(url: str, settings: dict, log=None) -> tuple[list[DownloadItem], 
     if settings.get('no_playlist'):
         opts['noplaylist'] = True
 
+    # ignoreerrors keeps a part-broken playlist usable, but it also swallows the
+    # reason a single link failed. Keep the engine's own messages so the failure
+    # can say something better than "nothing could be extracted".
+    engine_errors: list[str] = []
+    original_log = log
+
+    def capture(message):
+        text = str(message)
+        if 'ERROR' in text:
+            engine_errors.append(text)
+        if original_log is not None:
+            original_log(text)
+
+    opts['logger'] = _Logger(capture)
+
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
 
     if info is None:
-        raise DownloadError(f'Nothing could be extracted from {url}')
+        raise DownloadError(_extraction_failure(url, settings, engine_errors))
 
     items: list[DownloadItem] = []
     _collect(info, items, url, depth=0)
